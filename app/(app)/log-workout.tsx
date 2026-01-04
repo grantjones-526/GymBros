@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { auth } from "../../firebase";
-import { createWorkout } from "../../firestore";
+import { createWorkout, getTodaysWorkout, updateWorkout } from "../../firestore";
 
 const MUSCLE_GROUPS = [
   "Chest",
@@ -21,6 +21,7 @@ const MUSCLE_GROUPS = [
   "Arms",
   "Shoulders",
   "Cardio",
+  "Ass",
 ];
 
 export default function LogWorkout() {
@@ -28,25 +29,42 @@ export default function LogWorkout() {
   const user = auth.currentUser;
 
   const [muscleGroup, setMuscleGroup] = useState("");
-  const [calories, setCalories] = useState("");
   const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [workoutId, setWorkoutId] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [loadingWorkout, setLoadingWorkout] = useState(true);
+
+  // Check if today's workout exists on mount
+  useEffect(() => {
+    const loadTodaysWorkout = async () => {
+      try {
+        const userId = user?.uid;
+        if (!userId) return;
+
+        const todaysWorkout = await getTodaysWorkout(userId);
+
+        if (todaysWorkout) {
+          // Found existing workout, populate form
+          setWorkoutId(todaysWorkout.id);
+          setMuscleGroup(todaysWorkout.muscleGroup || "");
+          setIsEditing(true);
+        }
+      } catch (error) {
+        console.error("Error loading today's workout:", error);
+        // Don't show error to user, just let them create new
+      } finally {
+        setLoadingWorkout(false);
+      }
+    };
+
+    loadTodaysWorkout();
+  }, [user]);
 
   const handleSubmit = async () => {
     // Validation
     if (!muscleGroup) {
       Alert.alert("Muscle Group Required", "Please select a muscle group");
-      return;
-    }
-
-    if (!calories.trim()) {
-      Alert.alert("Calories Required", "Please enter calories consumed");
-      return;
-    }
-
-    const caloriesNum = parseInt(calories);
-    if (isNaN(caloriesNum) || caloriesNum < 0) {
-      Alert.alert("Invalid Calories", "Please enter a valid number");
       return;
     }
 
@@ -58,39 +76,69 @@ export default function LogWorkout() {
         return;
       }
 
-      // Create workout with current date and completed=true
-      await createWorkout(
-        userId,
-        new Date(),
-        caloriesNum,
-        muscleGroup,
-        true // Mark as completed
-      );
+      if (isEditing && workoutId) {
+        // Update existing workout
+        await updateWorkout(workoutId, {
+          muscleGroup,
+          caloriesConsumed: 0,
+          completed: true
+        });
 
-      Alert.alert("Success", "Workout logged successfully!", [
-        {
-          text: "OK",
-          onPress: () => router.back(),
-        },
-      ]);
+        Alert.alert("Success", "Workout updated successfully!", [
+          {
+            text: "OK",
+            onPress: () => router.back(),
+          },
+        ]);
+      } else {
+        // Create new workout
+        await createWorkout(
+          userId,
+          new Date(),
+          0, // Calories tracked separately
+          muscleGroup,
+          true // Mark as completed
+        );
+
+        Alert.alert("Success", "Workout logged successfully!", [
+          {
+            text: "OK",
+            onPress: () => router.back(),
+          },
+        ]);
+      }
 
       // Reset form
       setMuscleGroup("");
-      setCalories("");
+      setWorkoutId(null);
+      setIsEditing(false);
     } catch (error) {
       console.error("Workout log error:", error);
-      Alert.alert("Error", "Failed to log workout. Please try again.");
+      Alert.alert("Error", `Failed to ${isEditing ? 'update' : 'log'} workout. Please try again.`);
     } finally {
       setLoading(false);
     }
   };
 
+  if (loadingWorkout) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={{ marginTop: 12, fontSize: 16, color: "#666" }}>
+          Loading...
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.formContainer}>
-        <Text style={styles.header}>Log Workout</Text>
+        <Text style={styles.header}>{isEditing ? "Edit Today's Workout" : "Log Workout"}</Text>
         <Text style={styles.subheader}>
-          Track your workout and share with your gym bros!
+          {isEditing
+            ? "Update the muscle group you worked today"
+            : "Select which muscle group you worked today"}
         </Text>
 
         {/* Muscle Group Dropdown */}
@@ -142,19 +190,6 @@ export default function LogWorkout() {
           )}
         </View>
 
-        {/* Calories Input */}
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Calories Consumed *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g., 500"
-            value={calories}
-            onChangeText={setCalories}
-            keyboardType="numeric"
-            editable={!loading}
-          />
-        </View>
-
         {/* Submit Button */}
         <TouchableOpacity
           style={[styles.submitButton, loading && styles.disabledButton]}
@@ -164,7 +199,9 @@ export default function LogWorkout() {
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.submitButtonText}>Log Workout</Text>
+            <Text style={styles.submitButtonText}>
+              {isEditing ? "Update Workout" : "Log Workout"}
+            </Text>
           )}
         </TouchableOpacity>
 

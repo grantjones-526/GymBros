@@ -12,7 +12,8 @@ import {
   ScrollView,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { signIn, getAuthErrorMessage } from "../../firebase";
+import { signIn, getAuthErrorMessage, auth } from "../../firebase";
+import { getUser } from "../../firestore";
 
 export default function Login() {
   const router = useRouter();
@@ -45,7 +46,19 @@ export default function Login() {
     setLoading(true);
     try {
       await signIn(email.trim(), password);
-      // Auth listener in root layout will handle redirect
+
+      // Check if user has completed profile setup
+      const user = auth.currentUser;
+      if (user) {
+        const userData = await getUser(user.uid);
+        if (userData) {
+          // Profile exists, go to home
+          router.replace("/(app)/home");
+        } else {
+          // No profile yet, go to setup
+          router.replace("/(setup)/profile-setup");
+        }
+      }
     } catch (error: any) {
       Alert.alert("Login Failed", getAuthErrorMessage(error.code));
     } finally {

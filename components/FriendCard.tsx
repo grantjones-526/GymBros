@@ -3,6 +3,7 @@ import { View, Text, Image, StyleSheet } from 'react-native';
 
 interface FriendCardProps {
   name: string;
+  friendCode: string;
   profilePicURL: string;
   workedOutToday: boolean;
   totalCalories: number;
@@ -11,6 +12,7 @@ interface FriendCardProps {
 
 const FriendCard = React.memo(({
   name,
+  friendCode,
   profilePicURL,
   workedOutToday,
   totalCalories,
@@ -37,21 +39,35 @@ const FriendCard = React.memo(({
 
       {/* Friend Info */}
       <View style={styles.infoContainer}>
-        <Text style={styles.name}>{name}</Text>
+        <View style={styles.nameRow}>
+          <Text style={styles.name}>{name}</Text>
+          {friendCode && (
+            <Text style={styles.friendCodeText}>#{friendCode}</Text>
+          )}
+        </View>
 
         {workedOutToday ? (
           <>
-            <Text style={styles.caloriesText}>
-              {totalCalories} calories
-            </Text>
             {muscleGroups.length > 0 && (
               <Text style={styles.muscleGroupsText}>
                 {muscleGroups.join(', ')}
               </Text>
             )}
+            {totalCalories > 0 && (
+              <Text style={styles.caloriesText}>
+                {totalCalories.toLocaleString()} cal
+              </Text>
+            )}
           </>
         ) : (
-          <Text style={styles.inactiveText}>No workout today</Text>
+          <>
+            <Text style={styles.inactiveText}>No workout today</Text>
+            {totalCalories > 0 && (
+              <Text style={styles.caloriesText}>
+                {totalCalories.toLocaleString()} cal
+              </Text>
+            )}
+          </>
         )}
       </View>
 
@@ -66,10 +82,11 @@ const FriendCard = React.memo(({
   // Custom comparison for memo optimization
   return (
     prevProps.workedOutToday === nextProps.workedOutToday &&
-    prevProps.totalCalories === nextProps.totalCalories &&
     prevProps.muscleGroups.join() === nextProps.muscleGroups.join() &&
     prevProps.name === nextProps.name &&
-    prevProps.profilePicURL === nextProps.profilePicURL
+    prevProps.friendCode === nextProps.friendCode &&
+    prevProps.profilePicURL === nextProps.profilePicURL &&
+    prevProps.totalCalories === nextProps.totalCalories
   );
 });
 
@@ -119,21 +136,30 @@ const styles = StyleSheet.create({
   infoContainer: {
     flex: 1,
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginBottom: 4,
+  },
   name: {
     fontSize: 18,
     fontWeight: '600',
     color: '#000',
-    marginBottom: 4,
   },
-  caloriesText: {
+  friendCodeText: {
+    fontSize: 14,
+    color: '#999',
+    marginLeft: 4,
+  },
+  muscleGroupsText: {
     fontSize: 16,
     fontWeight: '500',
     color: '#34C759',
-    marginBottom: 2,
   },
-  muscleGroupsText: {
+  caloriesText: {
     fontSize: 14,
     color: '#666',
+    marginTop: 2,
   },
   inactiveText: {
     fontSize: 14,

@@ -14,8 +14,9 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { auth, updateUserProfile } from "../../firebase";
-import { createUser } from "../../firestore";
+import { createUser, generateUniqueFriendCode } from "../../firestore";
 import { pickAndUploadProfilePicture, takeAndUploadProfilePicture } from "../../profilePictureUpload";
+import { DEFAULT_PROFILE_PICTURE_URL } from "../../constants/defaults";
 
 export default function ProfileSetup() {
   const router = useRouter();
@@ -108,8 +109,11 @@ export default function ProfileSetup() {
         return;
       }
 
-      // Create Firestore user document
-      await createUser(userId, name.trim(), profilePicURL);
+      // Generate unique friend code
+      const friendCode = await generateUniqueFriendCode();
+
+      // Create Firestore user document with profile pic (custom or default) and friend code
+      await createUser(userId, name.trim(), profilePicURL || DEFAULT_PROFILE_PICTURE_URL, friendCode);
 
       // Update Firebase Auth profile
       await updateUserProfile({ displayName: name.trim() });
@@ -139,13 +143,10 @@ export default function ProfileSetup() {
 
           {/* Profile Picture */}
           <View style={styles.photoContainer}>
-            {profilePicURL ? (
-              <Image source={{ uri: profilePicURL }} style={styles.profileImage} />
-            ) : (
-              <View style={styles.placeholderImage}>
-                <Text style={styles.placeholderText}>📷</Text>
-              </View>
-            )}
+            <Image
+              source={{ uri: profilePicURL || DEFAULT_PROFILE_PICTURE_URL }}
+              style={styles.profileImage}
+            />
 
             <TouchableOpacity
               style={styles.photoButton}

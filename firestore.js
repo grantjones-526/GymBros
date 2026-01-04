@@ -1,38 +1,63 @@
 import {
+  addDoc,
+  arrayRemove,
+  arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  where,
+  onSnapshot,
   orderBy,
-  addDoc,
-  arrayUnion,
-  arrayRemove,
+  query,
+  setDoc,
   Timestamp,
-  onSnapshot
+  updateDoc,
+  where
 } from 'firebase/firestore';
 import { db } from './firebase';
 
 // ==================== USERS COLLECTION ====================
 
 /**
+ * Generate a unique 4-digit friend code
+ * @returns {Promise<string>} 4-digit code
+ */
+export const generateUniqueFriendCode = async () => {
+  const maxAttempts = 100;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    // Generate random 4-digit number (1000-9999)
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+
+    // Check if code already exists
+    const q = query(collection(db, 'users'), where('friendCode', '==', code));
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+      return code;
+    }
+  }
+
+  throw new Error('Unable to generate unique friend code');
+};
+
+/**
  * Create a new user document
  * @param {string} userId - User ID (typically from Firebase Auth)
  * @param {string} name - User's name
  * @param {string} profilePicURL - URL to profile picture
+ * @param {string} friendCode - 4-digit friend code
  * @returns {Promise} void
  */
-export const createUser = async (userId, name, profilePicURL = '') => {
+export const createUser = async (userId, name, profilePicURL = '', friendCode) => {
   try {
     await setDoc(doc(db, 'users', userId), {
       userID: userId,
       name,
       friends: [],
       profilePicURL,
+      friendCode,
       createdAt: Timestamp.now()
     });
   } catch (error) {
@@ -97,6 +122,118 @@ export const removeFriend = async (userId, friendId) => {
   try {
     await updateDoc(doc(db, 'users', userId), {
       friends: arrayRemove(friendId)
+    });
+  } catch (error) {
+    throw error;
+  }
+};
+
+/**
+ * Search for a user by name and friend code
+ * @param {string} name - User's name
+ * @param {string} friendCode - 4-digit friend code
+ * @returns {Promise} User data or null
+ */
+export const searchUserByNameAndCode = async (name, friendCode) => {
+  try {
+    const q = query(
+      collection(db, 'users'),
+      where('name', '==', name),
+      where('friendCode', '==', friendCode)
+    );
+
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) {
+      return null;
+    }
+
+    const userDoc = querySnapshot.docs[0];
+    return {
+      id: userDoc.id,
+      ...userDoc.data()
+    };
+  } catch (error) {
+    throw error;
+  }
+};
+
+/**
+ * Send a friend request
+ * @param {string} fromUserId - User sending the request
+ * @param {string} toUserId - User receiving the request
+ * @returns {Promise} Friend request document reference
+ */
+export const sendFriendRequest = async (fromUserId, toUserId) => {
+  try {
+    // Check if request already exists
+    const q = query(
+      collection(db, 'friendRequests'),
+      where('fromUserID', '==', fromUserId),
+      where('toUserID', '==', toUserId),
+      where('status', '==', 'pending')
+    );
+
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      throw new Error('Friend request already sent');
+    }
+
+    // Check if they're already friends
+    const fromUser = await getUser(fromUserId);
+    if (fromUser.friends && fromUser.friends.includes(toUserId)) {
+      throw new Error('Already friends');
+    }
+
+    // Create friend request
+    const requestRef = await addDoc(collection(db, 'friendRequests'), {
+      fromUserID: fromUserId,
+      toUserID: toUserId,
+      status: 'pending',
+      createdAt: Timestamp.now()
+    });
+
+    return requestRef;
+  } catch (error) {
+    throw error;
+  }
+};
+
+/**
+ * Accept a friend request
+ * @param {string} requestId - Friend request ID
+ * @returns {Promise} void
+ */
+export const acceptFriendRequest = async (requestId) => {
+  try {
+    const requestDoc = await getDoc(doc(db, 'friendRequests', requestId));
+    if (!requestDoc.exists()) {
+      throw new Error('Friend request not found');
+    }
+
+    const requestData = requestDoc.data();
+
+    // Add both users to each other's friends arrays
+    await addFriend(requestData.fromUserID, requestData.toUserID);
+    await addFriend(requestData.toUserID, requestData.fromUserID);
+
+    // Update request status
+    await updateDoc(doc(db, 'friendRequests', requestId), {
+      status: 'accepted'
+    });
+  } catch (error) {
+    throw error;
+  }
+};
+
+/**
+ * Reject a friend request
+ * @param {string} requestId - Friend request ID
+ * @returns {Promise} void
+ */
+export const rejectFriendRequest = async (requestId) => {
+  try {
+    await updateDoc(doc(db, 'friendRequests', requestId), {
+      status: 'rejected'
     });
   } catch (error) {
     throw error;
@@ -174,6 +311,46 @@ export const getUserWorkouts = async (userId) => {
 };
 
 /**
+ * Get today's workout for a user
+ * @param {string} userId - User ID
+ * @returns {Promise} Today's workout object or null
+ */
+export const getTodaysWorkout = async (userId) => {
+  try {
+    const { startOfDay, endOfDay } = getTodayDateRange();
+
+    // Simplified query to avoid composite index requirement
+    const q = query(
+      collection(db, 'workouts'),
+      where('userID', '==', userId),
+      where('date', '>=', startOfDay)
+    );
+
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) {
+      return null;
+    }
+
+    // Filter for today and get most recent
+    const todaysWorkouts = querySnapshot.docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }))
+      .filter(workout => {
+        const workoutDate = workout.date.toDate();
+        const endDate = endOfDay.toDate();
+        return workoutDate <= endDate;
+      })
+      .sort((a, b) => b.date.toMillis() - a.date.toMillis());
+
+    return todaysWorkouts.length > 0 ? todaysWorkouts[0] : null;
+  } catch (error) {
+    throw error;
+  }
+};
+
+/**
  * Get completed workouts for a user
  * @param {string} userId - User ID
  * @returns {Promise} Array of completed workout objects
@@ -238,160 +415,129 @@ export const deleteWorkout = async (workoutId) => {
   }
 };
 
-// ==================== FRIEND REQUESTS COLLECTION ====================
+// ==================== CALORIE ENTRIES COLLECTION ====================
 
 /**
- * Send a friend request
- * @param {string} fromUserId - Sender's user ID
- * @param {string} toUserId - Recipient's user ID
- * @returns {Promise} Friend request document reference
+ * Create a calorie entry
+ * @param {string} userId - User ID
+ * @param {Date} date - Entry date
+ * @param {number} amount - Calories consumed
+ * @param {string} description - Meal description (optional)
+ * @returns {Promise} Document reference
  */
-export const sendFriendRequest = async (fromUserId, toUserId) => {
+export const createCalorieEntry = async (userId, date, amount, description = '') => {
   try {
-    // Check if request already exists
-    const existingRequest = await getFriendRequest(fromUserId, toUserId);
-    if (existingRequest) {
-      throw new Error('Friend request already sent');
-    }
+    // Normalize date to start of day
+    const entryDate = new Date(date);
+    entryDate.setHours(0, 0, 0, 0);
 
-    const requestRef = await addDoc(collection(db, 'friendRequests'), {
-      from: fromUserId,
-      to: toUserId,
-      status: 'pending',
+    const entryRef = await addDoc(collection(db, 'calorieEntries'), {
+      userID: userId,
+      date: Timestamp.fromDate(entryDate),
+      amount,
+      description,
       createdAt: Timestamp.now()
     });
-    return requestRef;
+    return entryRef;
   } catch (error) {
     throw error;
   }
 };
 
 /**
- * Get a specific friend request
- * @param {string} fromUserId - Sender's user ID
- * @param {string} toUserId - Recipient's user ID
- * @returns {Promise} Friend request object or null
- */
-export const getFriendRequest = async (fromUserId, toUserId) => {
-  try {
-    const q = query(
-      collection(db, 'friendRequests'),
-      where('from', '==', fromUserId),
-      where('to', '==', toUserId)
-    );
-    const querySnapshot = await getDocs(q);
-    if (!querySnapshot.empty) {
-      const doc = querySnapshot.docs[0];
-      return { id: doc.id, ...doc.data() };
-    }
-    return null;
-  } catch (error) {
-    throw error;
-  }
-};
-
-/**
- * Get all pending friend requests for a user
+ * Get today's calorie entries for a user
  * @param {string} userId - User ID
- * @returns {Promise} Array of friend request objects
+ * @returns {Promise} Array of calorie entry objects
  */
-export const getPendingFriendRequests = async (userId) => {
+export const getTodaysCalorieEntries = async (userId) => {
   try {
+    const { startOfDay, endOfDay } = getTodayDateRange();
+
     const q = query(
-      collection(db, 'friendRequests'),
-      where('to', '==', userId),
-      where('status', '==', 'pending')
+      collection(db, 'calorieEntries'),
+      where('userID', '==', userId),
+      where('date', '>=', startOfDay)
     );
+
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+
+    return querySnapshot.docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }))
+      .filter(entry => {
+        const entryDate = entry.date.toDate();
+        return entryDate <= endOfDay.toDate();
+      })
+      .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
   } catch (error) {
     throw error;
   }
 };
 
 /**
- * Accept a friend request
- * @param {string} requestId - Friend request document ID
+ * Delete a calorie entry
+ * @param {string} entryId - Entry document ID
  * @returns {Promise} void
  */
-export const acceptFriendRequest = async (requestId) => {
+export const deleteCalorieEntry = async (entryId) => {
   try {
-    // Get the friend request
-    const requestDoc = await getDoc(doc(db, 'friendRequests', requestId));
-    if (!requestDoc.exists()) {
-      throw new Error('Friend request not found');
+    await deleteDoc(doc(db, 'calorieEntries', entryId));
+  } catch (error) {
+    throw error;
+  }
+};
+
+/**
+ * Get daily calories for multiple users (for feed)
+ * @param {Array<string>} userIds - Array of user IDs
+ * @returns {Promise} Object mapping userID to total calories
+ */
+export const getDailyCaloriesForUsers = async (userIds) => {
+  if (!userIds || userIds.length === 0) {
+    return {};
+  }
+
+  try {
+    const { startOfDay, endOfDay } = getTodayDateRange();
+
+    // Batch by 30 (Firestore 'in' limit)
+    const batchSize = 30;
+    const allEntries = [];
+
+    for (let i = 0; i < userIds.length; i += batchSize) {
+      const batch = userIds.slice(i, i + batchSize);
+
+      const q = query(
+        collection(db, 'calorieEntries'),
+        where('userID', 'in', batch),
+        where('date', '>=', startOfDay)
+      );
+
+      const querySnapshot = await getDocs(q);
+      const entries = querySnapshot.docs
+        .map(doc => doc.data())
+        .filter(entry => entry.date.toDate() <= endOfDay.toDate());
+
+      allEntries.push(...entries);
     }
 
-    const requestData = requestDoc.data();
-    const { from, to } = requestData;
-
-    // Add each user to the other's friends list
-    await addFriend(from, to);
-    await addFriend(to, from);
-
-    // Update request status
-    await updateDoc(doc(db, 'friendRequests', requestId), {
-      status: 'accepted',
-      acceptedAt: Timestamp.now()
+    // Aggregate by user
+    const caloriesByUser = {};
+    allEntries.forEach(entry => {
+      if (!caloriesByUser[entry.userID]) {
+        caloriesByUser[entry.userID] = 0;
+      }
+      caloriesByUser[entry.userID] += entry.amount || 0;
     });
+
+    return caloriesByUser;
   } catch (error) {
     throw error;
   }
 };
 
-/**
- * Reject a friend request
- * @param {string} requestId - Friend request document ID
- * @returns {Promise} void
- */
-export const rejectFriendRequest = async (requestId) => {
-  try {
-    await updateDoc(doc(db, 'friendRequests', requestId), {
-      status: 'rejected',
-      rejectedAt: Timestamp.now()
-    });
-  } catch (error) {
-    throw error;
-  }
-};
-
-/**
- * Delete a friend request
- * @param {string} requestId - Friend request document ID
- * @returns {Promise} void
- */
-export const deleteFriendRequest = async (requestId) => {
-  try {
-    await deleteDoc(doc(db, 'friendRequests', requestId));
-  } catch (error) {
-    throw error;
-  }
-};
-
-/**
- * Get sent friend requests for a user
- * @param {string} userId - User ID
- * @returns {Promise} Array of friend request objects
- */
-export const getSentFriendRequests = async (userId) => {
-  try {
-    const q = query(
-      collection(db, 'friendRequests'),
-      where('from', '==', userId),
-      where('status', '==', 'pending')
-    );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-  } catch (error) {
-    throw error;
-  }
-};
 
 // ==================== REAL-TIME LISTENERS ====================
 

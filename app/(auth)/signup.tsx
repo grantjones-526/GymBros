@@ -56,7 +56,8 @@ export default function SignUp() {
     setLoading(true);
     try {
       await signUp(email.trim(), password);
-      // Auth listener in root layout will detect new user and redirect to profile setup
+      // New user created, redirect to profile setup
+      router.replace("/(setup)/profile-setup");
     } catch (error: any) {
       Alert.alert("Sign Up Failed", getAuthErrorMessage(error.code));
     } finally {

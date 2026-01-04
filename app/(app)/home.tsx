@@ -9,13 +9,15 @@ import {
   Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { auth, logOut } from "../../firebase";
-import { subscribeToUserFriends, subscribeToDailyWorkouts } from "../../firestore";
+import { subscribeToUserFriends, subscribeToDailyWorkouts, getDailyCaloriesForUsers, getUser } from "../../firestore";
 import FriendCard from "../../components/FriendCard";
 
 interface FriendWithWorkout {
   userID: string;
   name: string;
+  friendCode: string;
   profilePicURL: string;
   workedOutToday: boolean;
   totalCalories: number;
@@ -27,10 +29,29 @@ export default function Home() {
   const router = useRouter();
   const user = auth.currentUser;
 
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [friends, setFriends] = useState<any[]>([]);
   const [workouts, setWorkouts] = useState<any[]>([]);
+  const [caloriesByUser, setCaloriesByUser] = useState<{[key: string]: number}>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Load current user data
+  useEffect(() => {
+    const loadCurrentUser = async () => {
+      const userId = user?.uid;
+      if (!userId) return;
+
+      try {
+        const userData = await getUser(userId);
+        setCurrentUser(userData);
+      } catch (error) {
+        console.error("Error loading user:", error);
+      }
+    };
+
+    loadCurrentUser();
+  }, [user]);
 
   // Subscribe to friends list
   useEffect(() => {
@@ -83,6 +104,26 @@ export default function Home() {
     };
   }, [friends]);
 
+  // Fetch calories for all friends
+  useEffect(() => {
+    if (friends.length === 0) {
+      setCaloriesByUser({});
+      return;
+    }
+
+    const fetchCalories = async () => {
+      try {
+        const friendIds = friends.map((f) => f.userID);
+        const calories = await getDailyCaloriesForUsers(friendIds);
+        setCaloriesByUser(calories);
+      } catch (error) {
+        console.error("Calories error:", error);
+      }
+    };
+
+    fetchCalories();
+  }, [friends]);
+
   // Aggregate workout data per friend and sort
   const friendsWithWorkouts = useMemo(() => {
     const aggregated: FriendWithWorkout[] = friends.map((friend) => {
@@ -92,19 +133,17 @@ export default function Home() {
         return {
           userID: friend.userID,
           name: friend.name,
+          friendCode: friend.friendCode,
           profilePicURL: friend.profilePicURL,
           workedOutToday: false,
-          totalCalories: 0,
+          totalCalories: caloriesByUser[friend.userID] || 0,
           muscleGroups: [],
           lastWorkoutTime: null,
         };
       }
 
-      // Aggregate calories and muscle groups
-      const totalCalories = friendWorkouts.reduce(
-        (sum, w) => sum + (w.caloriesConsumed || 0),
-        0
-      );
+      // Aggregate muscle groups (calories tracked separately)
+      const totalCalories = caloriesByUser[friend.userID] || 0;
 
       const muscleGroups = [
         ...new Set(
@@ -124,6 +163,7 @@ export default function Home() {
       return {
         userID: friend.userID,
         name: friend.name,
+        friendCode: friend.friendCode,
         profilePicURL: friend.profilePicURL,
         workedOutToday: true,
         totalCalories,
@@ -149,7 +189,7 @@ export default function Home() {
     });
 
     return sorted;
-  }, [friends, workouts]);
+  }, [friends, workouts, caloriesByUser]);
 
   const handleLogout = async () => {
     try {
@@ -165,10 +205,23 @@ export default function Home() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>GymBros 💪</Text>
-        <Text style={styles.headerSubtitle}>
-          {user?.displayName || "Gym Bro"}'s Feed
-        </Text>
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerTitle}>GymBros 💪</Text>
+          <View style={styles.subtitleRow}>
+            <Text style={styles.headerSubtitle}>
+              {user?.displayName || "Gym Bro"}
+            </Text>
+            {currentUser?.friendCode && (
+              <Text style={styles.friendCode}>#{currentUser.friendCode}</Text>
+            )}
+          </View>
+        </View>
+        <TouchableOpacity
+          style={styles.addFriendButton}
+          onPress={() => router.push("/(app)/add-friend")}
+        >
+          <Ionicons name="person-add" size={24} color="#007AFF" />
+        </TouchableOpacity>
       </View>
 
       {/* Loading State */}
@@ -214,6 +267,7 @@ export default function Home() {
           renderItem={({ item }) => (
             <FriendCard
               name={item.name}
+              friendCode={item.friendCode}
               profilePicURL={item.profilePicURL}
               workedOutToday={item.workedOutToday}
               totalCalories={item.totalCalories}
@@ -224,14 +278,6 @@ export default function Home() {
           showsVerticalScrollIndicator={false}
         />
       )}
-
-      {/* Floating Action Button - Log Workout */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => router.push("/(app)/log-workout")}
-      >
-        <Text style={styles.fabIcon}>+</Text>
-      </TouchableOpacity>
 
       {/* Logout Button */}
       <View style={styles.footer}>
@@ -249,21 +295,40 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8f9fa",
   },
   header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     padding: 20,
     paddingTop: 10,
     backgroundColor: "#fff",
     borderBottomWidth: 1,
     borderBottomColor: "#e0e0e0",
   },
+  headerLeft: {
+    flex: 1,
+  },
   headerTitle: {
     fontSize: 28,
     fontWeight: "bold",
     color: "#000",
   },
+  subtitleRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    marginTop: 4,
+  },
   headerSubtitle: {
     fontSize: 16,
-    color: "#666",
-    marginTop: 4,
+    color: "#000",
+    fontWeight: "600",
+  },
+  friendCode: {
+    fontSize: 14,
+    color: "#999",
+    marginLeft: 4,
+  },
+  addFriendButton: {
+    padding: 8,
   },
   centered: {
     flex: 1,
