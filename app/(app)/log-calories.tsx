@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   ScrollView,
   FlatList,
+  Modal,
 } from "react-native";
 import { auth } from "../../firebase";
 import {
@@ -22,6 +23,9 @@ interface CalorieEntry {
   amount: number;
   description: string;
   createdAt: any;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
 }
 
 export default function LogCalories() {
@@ -32,6 +36,10 @@ export default function LogCalories() {
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingEntries, setLoadingEntries] = useState(true);
+  const [protein, setProtein] = useState("");
+  const [carbs, setCarbs] = useState("");
+  const [fat, setFat] = useState("");
+  const [showMacroModal, setShowMacroModal] = useState(false);
 
   // Load today's entries on mount
   useEffect(() => {
@@ -80,6 +88,28 @@ export default function LogCalories() {
       return;
     }
 
+    // Validate macros if provided
+    let macrosData: { protein: number | null; carbs: number | null; fat: number | null } | undefined = undefined;
+    if (protein || carbs || fat) {
+      const proteinNum = protein ? parseFloat(protein) : null;
+      const carbsNum = carbs ? parseFloat(carbs) : null;
+      const fatNum = fat ? parseFloat(fat) : null;
+
+      // Validate macro values
+      if ((protein && (isNaN(proteinNum!) || proteinNum! < 0)) ||
+          (carbs && (isNaN(carbsNum!) || carbsNum! < 0)) ||
+          (fat && (isNaN(fatNum!) || fatNum! < 0))) {
+        Alert.alert("Invalid Macros", "Please enter valid positive numbers for macros");
+        return;
+      }
+
+      macrosData = {
+        protein: proteinNum,
+        carbs: carbsNum,
+        fat: fatNum
+      };
+    }
+
     setLoading(true);
     try {
       const userId = user?.uid;
@@ -89,19 +119,24 @@ export default function LogCalories() {
       }
 
       const desc = isQuickAdd ? "" : description.trim();
-      await createCalorieEntry(userId, new Date(), amountNum, desc);
+      await createCalorieEntry(userId, new Date(), amountNum, desc, macrosData);
 
       // Reload entries
       const updatedEntries = await getTodaysCalorieEntries(userId);
       setEntries(updatedEntries);
 
-      // Reset form
+      // Reset form (including macro fields)
       setAmount("");
       setDescription("");
+      setProtein("");
+      setCarbs("");
+      setFat("");
 
+      // Updated success message to mention macros if included
+      const macroInfo = macrosData ? " with macros" : "";
       Alert.alert(
         "Success",
-        `Added ${amountNum} calories${desc ? ` (${desc})` : ""}`
+        `Added ${amountNum} calories${desc ? ` (${desc})` : ""}${macroInfo}`
       );
     } catch (error) {
       console.error("Error adding entry:", error);
@@ -169,6 +204,7 @@ export default function LogCalories() {
   }
 
   return (
+    <>
     <ScrollView style={styles.container}>
       <View style={styles.content}>
         <Text style={styles.header}>Log Calories</Text>
@@ -227,6 +263,17 @@ export default function LogCalories() {
             />
           </View>
 
+          {/* Add Macros Button */}
+          <TouchableOpacity
+            style={styles.addMacrosButton}
+            onPress={() => setShowMacroModal(true)}
+            disabled={loading}
+          >
+            <Text style={styles.addMacrosButtonText}>
+              {(protein || carbs || fat) ? '✓ Macros Added' : '+ Add Macros (Optional)'}
+            </Text>
+          </TouchableOpacity>
+
           {/* Buttons */}
           <View style={styles.buttonRow}>
             <TouchableOpacity
@@ -258,6 +305,89 @@ export default function LogCalories() {
         </View>
       </View>
     </ScrollView>
+
+      {/* Macro Input Modal */}
+      <Modal
+        visible={showMacroModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowMacroModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowMacroModal(false)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalHeader}>Add Macros</Text>
+              <Text style={styles.modalSubheader}>
+                All fields optional - enter grams
+              </Text>
+
+              {/* Protein Input */}
+              <View style={styles.modalInputContainer}>
+                <Text style={styles.modalLabel}>Protein (g)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g., 25"
+                  value={protein}
+                  onChangeText={setProtein}
+                  keyboardType="numeric"
+                />
+              </View>
+
+              {/* Carbs Input */}
+              <View style={styles.modalInputContainer}>
+                <Text style={styles.modalLabel}>Carbs (g)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g., 40"
+                  value={carbs}
+                  onChangeText={setCarbs}
+                  keyboardType="numeric"
+                />
+              </View>
+
+              {/* Fat Input */}
+              <View style={styles.modalInputContainer}>
+                <Text style={styles.modalLabel}>Fat (g)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g., 10"
+                  value={fat}
+                  onChangeText={setFat}
+                  keyboardType="numeric"
+                />
+              </View>
+
+              {/* Buttons */}
+              <TouchableOpacity
+                style={styles.modalSaveButton}
+                onPress={() => setShowMacroModal(false)}
+              >
+                <Text style={styles.modalSaveButtonText}>Save</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => {
+                  setProtein("");
+                  setCarbs("");
+                  setFat("");
+                  setShowMacroModal(false);
+                }}
+              >
+                <Text style={styles.modalCancelButtonText}>Clear & Close</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+    </>
   );
 }
 
@@ -426,5 +556,95 @@ const styles = StyleSheet.create({
   },
   quickButtonText: {
     color: "#007AFF",
+  },
+  addMacrosButton: {
+    backgroundColor: "transparent",
+    borderWidth: 2,
+    borderColor: "#007AFF",
+    borderStyle: "dashed",
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  addMacrosButtonText: {
+    color: "#007AFF",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 24,
+    width: "100%",
+    maxWidth: 400,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  modalHeader: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#000",
+    marginBottom: 6,
+    textAlign: "center",
+  },
+  modalSubheader: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  modalInputContainer: {
+    marginBottom: 16,
+  },
+  modalLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#000",
+    marginBottom: 6,
+  },
+  modalInput: {
+    backgroundColor: "#f5f5f5",
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  modalSaveButton: {
+    backgroundColor: "#007AFF",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  modalSaveButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  modalCancelButton: {
+    backgroundColor: "transparent",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#999",
+  },
+  modalCancelButtonText: {
+    color: "#666",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

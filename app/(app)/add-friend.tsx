@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -12,7 +12,13 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { auth } from "../../firebase";
-import { searchUserByNameAndCode, sendFriendRequest } from "../../firestore";
+import {
+  searchUserByNameAndCode,
+  sendFriendRequest,
+  subscribeToPendingFriendRequests,
+  acceptFriendRequest,
+  rejectFriendRequest
+} from "../../firestore";
 
 export default function AddFriend() {
   const router = useRouter();
@@ -22,6 +28,51 @@ export default function AddFriend() {
   const [searchedUser, setSearchedUser] = useState<any | null>(null);
   const [searching, setSearching] = useState(false);
   const [sendingRequest, setSendingRequest] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [processingRequest, setProcessingRequest] = useState<string | null>(null);
+
+  // Subscribe to pending friend requests
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const unsubscribe = subscribeToPendingFriendRequests(
+      user.uid,
+      (requests) => {
+        setPendingRequests(requests);
+      },
+      (error) => {
+        console.error("Error loading friend requests:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleAcceptRequest = async (requestId: string, userName: string) => {
+    setProcessingRequest(requestId);
+    try {
+      await acceptFriendRequest(requestId);
+      Alert.alert("Success", `You and ${userName} are now friends!`);
+    } catch (error: any) {
+      console.error("Accept request error:", error);
+      Alert.alert("Error", error.message || "Failed to accept friend request");
+    } finally {
+      setProcessingRequest(null);
+    }
+  };
+
+  const handleRejectRequest = async (requestId: string, userName: string) => {
+    setProcessingRequest(requestId);
+    try {
+      await rejectFriendRequest(requestId);
+      Alert.alert("Rejected", `Friend request from ${userName} rejected`);
+    } catch (error: any) {
+      console.error("Reject request error:", error);
+      Alert.alert("Error", error.message || "Failed to reject friend request");
+    } finally {
+      setProcessingRequest(null);
+    }
+  };
 
   const handleSearch = async () => {
     if (!searchInput.trim()) {
@@ -161,6 +212,70 @@ export default function AddFriend() {
           </View>
         )}
 
+        {/* Pending Friend Requests */}
+        {pendingRequests.length > 0 && (
+          <View style={styles.requestsContainer}>
+            <Text style={styles.sectionTitle}>
+              Friend Requests ({pendingRequests.length})
+            </Text>
+            {pendingRequests.map((request) => (
+              <View key={request.id} style={styles.requestCard}>
+                <View style={styles.requestUserInfo}>
+                  <Image
+                    source={{ uri: request.fromUser?.profilePicURL || '' }}
+                    style={styles.requestProfileImage}
+                  />
+                  <View style={styles.requestDetails}>
+                    <View style={styles.nameRow}>
+                      <Text style={styles.requestUserName}>
+                        {request.fromUser?.name || 'Unknown'}
+                      </Text>
+                      <Text style={styles.friendCode}>
+                        #{request.fromUser?.friendCode || 'N/A'}
+                      </Text>
+                    </View>
+                    <Text style={styles.requestTime}>
+                      {request.createdAt?.toDate().toLocaleDateString() || 'Recently'}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.requestActions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.acceptButton,
+                      processingRequest === request.id && styles.disabledButton
+                    ]}
+                    onPress={() => handleAcceptRequest(request.id, request.fromUser?.name || 'User')}
+                    disabled={processingRequest !== null}
+                  >
+                    {processingRequest === request.id ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.acceptButtonText}>Accept</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.rejectButton,
+                      processingRequest === request.id && styles.disabledButton
+                    ]}
+                    onPress={() => handleRejectRequest(request.id, request.fromUser?.name || 'User')}
+                    disabled={processingRequest !== null}
+                  >
+                    {processingRequest === request.id ? (
+                      <ActivityIndicator color="#666" size="small" />
+                    ) : (
+                      <Text style={styles.rejectButtonText}>Reject</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* Cancel Button */}
         <TouchableOpacity
           style={styles.cancelButton}
@@ -295,6 +410,75 @@ const styles = StyleSheet.create({
   sendButtonText: {
     color: "#fff",
     fontSize: 16,
+    fontWeight: "600",
+  },
+  requestsContainer: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  requestCard: {
+    backgroundColor: "#f8f9fa",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  requestUserInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  requestProfileImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 12,
+  },
+  requestDetails: {
+    flex: 1,
+  },
+  requestUserName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#000",
+  },
+  requestTime: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 2,
+  },
+  requestActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  acceptButton: {
+    flex: 1,
+    backgroundColor: "#34C759",
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  acceptButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  rejectButton: {
+    flex: 1,
+    backgroundColor: "#e0e0e0",
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  rejectButtonText: {
+    color: "#666",
+    fontSize: 14,
     fontWeight: "600",
   },
   cancelButton: {

@@ -11,8 +11,9 @@ import {
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { auth } from "../../firebase";
-import { createWorkout, getTodaysWorkout, updateWorkout } from "../../firestore";
+import { createWorkout, getTodaysWorkout, updateWorkout, getUser } from "../../firestore";
 
 const MUSCLE_GROUPS = [
   "Chest",
@@ -21,8 +22,16 @@ const MUSCLE_GROUPS = [
   "Arms",
   "Shoulders",
   "Cardio",
-  "Ass",
 ];
+
+const STAT_LABELS: { [key: string]: string } = {
+  pr: "Personal Record",
+  cardio: "Cardio (minutes)",
+  stretch: "Stretch (minutes)",
+  weight: "Weight (lbs)",
+  reps: "Total Reps",
+  duration: "Duration (minutes)",
+};
 
 export default function LogWorkout() {
   const router = useRouter();
@@ -34,6 +43,9 @@ export default function LogWorkout() {
   const [workoutId, setWorkoutId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [loadingWorkout, setLoadingWorkout] = useState(true);
+  const [statPreferences, setStatPreferences] = useState<string[]>([]);
+  const [statValues, setStatValues] = useState<{ [key: string]: string }>({});
+  const [savingStatId, setSavingStatId] = useState<string | null>(null);
 
   // Check if today's workout exists on mount
   useEffect(() => {
@@ -49,6 +61,11 @@ export default function LogWorkout() {
           setWorkoutId(todaysWorkout.id);
           setMuscleGroup(todaysWorkout.muscleGroup || "");
           setIsEditing(true);
+
+          // Load existing stat values
+          if (todaysWorkout.stats) {
+            setStatValues(todaysWorkout.stats);
+          }
         }
       } catch (error) {
         console.error("Error loading today's workout:", error);
@@ -60,6 +77,71 @@ export default function LogWorkout() {
 
     loadTodaysWorkout();
   }, [user]);
+
+  // Load user's stat preferences
+  useEffect(() => {
+    const loadStatPreferences = async () => {
+      try {
+        const userId = user?.uid;
+        if (!userId) return;
+
+        const userData = await getUser(userId);
+        if (userData?.statPreferences) {
+          setStatPreferences(userData.statPreferences);
+        }
+      } catch (error) {
+        console.error("Error loading stat preferences:", error);
+      }
+    };
+
+    loadStatPreferences();
+  }, [user]);
+
+  const handleSaveStat = async (statId: string) => {
+    const statValue = statValues[statId];
+    if (!statValue || !statValue.trim()) {
+      Alert.alert("Value Required", `Please enter a value for ${STAT_LABELS[statId]}`);
+      return;
+    }
+
+    setSavingStatId(statId);
+    try {
+      const userId = user?.uid;
+      if (!userId) {
+        Alert.alert("Error", "You must be logged in");
+        return;
+      }
+
+      // Get or create today's workout
+      let todaysWorkout = await getTodaysWorkout(userId);
+
+      if (!todaysWorkout) {
+        // Create a basic workout entry for stats
+        const workoutRef = await createWorkout(
+          userId,
+          new Date(),
+          0,
+          "Stats Only",
+          false
+        );
+        todaysWorkout = { id: workoutRef.id };
+        setWorkoutId(workoutRef.id);
+      }
+
+      // Save the stat
+      const existingStats = todaysWorkout.stats || {};
+      await updateWorkout(todaysWorkout.id, {
+        stats: { ...existingStats, [statId]: statValue }
+      });
+
+      Alert.alert("Success", `${STAT_LABELS[statId]} saved!`);
+    } catch (error) {
+      console.error("Save stat error:", error);
+      Alert.alert("Error", "Failed to save stat. Please try again.");
+    } finally {
+      setSavingStatId(null);
+    }
+  };
 
   const handleSubmit = async () => {
     // Validation
@@ -81,7 +163,7 @@ export default function LogWorkout() {
         await updateWorkout(workoutId, {
           muscleGroup,
           caloriesConsumed: 0,
-          completed: true
+          completed: true,
         });
 
         Alert.alert("Success", "Workout updated successfully!", [
@@ -214,6 +296,57 @@ export default function LogWorkout() {
           <Text style={styles.cancelButtonText}>Cancel</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Individual Stat Sections */}
+      {statPreferences.length > 0 && (
+        <View style={styles.statsSectionsContainer}>
+          <Text style={styles.statsSectionsHeader}>Track Your Stats</Text>
+          {statPreferences.map((statId) => (
+            <View key={statId} style={styles.statCard}>
+              <View style={styles.statCardHeader}>
+                <Ionicons
+                  name={
+                    statId === 'pr' ? 'trophy-outline' :
+                    statId === 'cardio' ? 'heart-outline' :
+                    statId === 'stretch' ? 'body-outline' :
+                    statId === 'weight' ? 'scale-outline' :
+                    statId === 'reps' ? 'repeat-outline' :
+                    'time-outline'
+                  }
+                  size={24}
+                  color="#007AFF"
+                />
+                <Text style={styles.statCardTitle}>{STAT_LABELS[statId]}</Text>
+              </View>
+
+              <TextInput
+                style={styles.statInput}
+                placeholder={`Enter ${STAT_LABELS[statId].toLowerCase()}`}
+                value={statValues[statId] || ""}
+                onChangeText={(text) =>
+                  setStatValues((prev) => ({ ...prev, [statId]: text }))
+                }
+                keyboardType={statId === 'pr' ? 'default' : 'numeric'}
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.saveStatButton,
+                  savingStatId === statId && styles.disabledButton
+                ]}
+                onPress={() => handleSaveStat(statId)}
+                disabled={savingStatId === statId}
+              >
+                {savingStatId === statId ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.saveStatButtonText}>Save {STAT_LABELS[statId]}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -221,10 +354,12 @@ export default function LogWorkout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#f8f9fa",
   },
   formContainer: {
     padding: 20,
+    backgroundColor: "#fff",
+    marginBottom: 16,
   },
   header: {
     fontSize: 32,
@@ -345,6 +480,81 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: {
     color: "#666",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  statsSection: {
+    marginTop: 8,
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: "#e0e0e0",
+  },
+  statsSectionTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#000",
+    marginBottom: 16,
+  },
+  input: {
+    backgroundColor: "#f5f5f5",
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  statsSectionsContainer: {
+    padding: 20,
+    paddingTop: 0,
+  },
+  statsSectionsHeader: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#000",
+    marginBottom: 16,
+    marginTop: 8,
+  },
+  statCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  statCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  statCardTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#000",
+    marginLeft: 12,
+  },
+  statInput: {
+    backgroundColor: "#f5f5f5",
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    marginBottom: 16,
+  },
+  saveStatButton: {
+    backgroundColor: "#007AFF",
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  saveStatButtonText: {
+    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },

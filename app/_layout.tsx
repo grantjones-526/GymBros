@@ -3,13 +3,14 @@ import { useEffect, useState } from "react";
 import { View, ActivityIndicator } from "react-native";
 import { subscribeToAuthChanges } from "../firebase";
 import { getUser } from "../firestore";
+import { User } from "firebase/auth";
 
 export default function RootLayout() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Subscribe to auth state changes
-    const unsubscribe = subscribeToAuthChanges(async (user) => {
+    const unsubscribe = subscribeToAuthChanges(async (user: User | null) => {
       if (user) {
         // User is authenticated, check if they have a Firestore profile
         try {

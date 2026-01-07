@@ -7,11 +7,13 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  Image,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { auth, logOut } from "../../firebase";
-import { subscribeToUserFriends, subscribeToDailyWorkouts, getDailyCaloriesForUsers, getUser } from "../../firestore";
+import { subscribeToUserFriends, subscribeToDailyWorkouts, getDailyCaloriesForUsers, getUser, subscribeToPendingFriendRequests } from "../../firestore";
 import FriendCard from "../../components/FriendCard";
 
 interface FriendWithWorkout {
@@ -28,6 +30,7 @@ interface FriendWithWorkout {
 export default function Home() {
   const router = useRouter();
   const user = auth.currentUser;
+  const insets = useSafeAreaInsets();
 
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [friends, setFriends] = useState<any[]>([]);
@@ -35,6 +38,7 @@ export default function Home() {
   const [caloriesByUser, setCaloriesByUser] = useState<{[key: string]: number}>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
 
   // Load current user data
   useEffect(() => {
@@ -63,11 +67,11 @@ export default function Home() {
 
     const unsubscribeFriends = subscribeToUserFriends(
       userId,
-      (friendsData) => {
+      (friendsData: any[]) => {
         setFriends(friendsData);
         setLoading(false);
       },
-      (error) => {
+      (error: Error) => {
         console.error("Friends error:", error);
         setError("Failed to load friends");
         setLoading(false);
@@ -90,10 +94,10 @@ export default function Home() {
 
     const unsubscribeWorkouts = subscribeToDailyWorkouts(
       friendIds,
-      (workoutsData) => {
+      (workoutsData: any[]) => {
         setWorkouts(workoutsData);
       },
-      (error) => {
+      (error: Error) => {
         console.error("Workouts error:", error);
         setError("Failed to load workouts");
       }
@@ -123,6 +127,24 @@ export default function Home() {
 
     fetchCalories();
   }, [friends]);
+
+  // Subscribe to pending friend requests for badge count
+  useEffect(() => {
+    const userId = user?.uid;
+    if (!userId) return;
+
+    const unsubscribe = subscribeToPendingFriendRequests(
+      userId,
+      (requests) => {
+        setPendingRequestsCount(requests.length);
+      },
+      (error) => {
+        console.error("Pending requests error:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
 
   // Aggregate workout data per friend and sort
   const friendsWithWorkouts = useMemo(() => {
@@ -204,23 +226,34 @@ export default function Home() {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        {/* Profile Picture - Left */}
+        <TouchableOpacity
+          style={styles.profileButton}
+          onPress={() => router.push("/(app)/profile")}
+        >
+          <Image
+            source={{ uri: currentUser?.profilePicURL || user?.photoURL || '' }}
+            style={styles.headerProfileImage}
+          />
+        </TouchableOpacity>
+
+        {/* App Title - Center */}
+        <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>GymBros 💪</Text>
-          <View style={styles.subtitleRow}>
-            <Text style={styles.headerSubtitle}>
-              {user?.displayName || "Gym Bro"}
-            </Text>
-            {currentUser?.friendCode && (
-              <Text style={styles.friendCode}>#{currentUser.friendCode}</Text>
-            )}
-          </View>
         </View>
+
+        {/* Add Friend Button - Right */}
         <TouchableOpacity
           style={styles.addFriendButton}
           onPress={() => router.push("/(app)/add-friend")}
         >
           <Ionicons name="person-add" size={24} color="#007AFF" />
+          {pendingRequestsCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{pendingRequestsCount}</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -280,7 +313,7 @@ export default function Home() {
       )}
 
       {/* Logout Button */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
@@ -298,37 +331,52 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 20,
-    paddingTop: 10,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     backgroundColor: "#fff",
     borderBottomWidth: 1,
     borderBottomColor: "#e0e0e0",
   },
-  headerLeft: {
+  profileButton: {
+    width: 40,
+    height: 40,
+  },
+  headerProfileImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#e0e0e0",
+  },
+  headerCenter: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "bold",
     color: "#000",
   },
-  subtitleRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    marginTop: 4,
-  },
-  headerSubtitle: {
-    fontSize: 16,
-    color: "#000",
-    fontWeight: "600",
-  },
-  friendCode: {
-    fontSize: 14,
-    color: "#999",
-    marginLeft: 4,
-  },
   addFriendButton: {
     padding: 8,
+    position: "relative",
+  },
+  badge: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    backgroundColor: "#FF3B30",
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "bold",
   },
   centered: {
     flex: 1,
@@ -377,7 +425,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   footer: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
     backgroundColor: "#fff",
     borderTopWidth: 1,
     borderTopColor: "#e0e0e0",

@@ -1,7 +1,10 @@
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function AppLayout() {
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs
       screenOptions={{
@@ -11,8 +14,8 @@ export default function AppLayout() {
           backgroundColor: "#fff",
           borderTopWidth: 1,
           borderTopColor: "#e0e0e0",
-          height: 60,
-          paddingBottom: 8,
+          height: 60 + insets.bottom,
+          paddingBottom: insets.bottom + 8,
           paddingTop: 8,
         },
         tabBarLabelStyle: {
@@ -54,6 +57,13 @@ export default function AppLayout() {
         name="add-friend"
         options={{
           title: "Add Friend",
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
           href: null,
         }}
       />

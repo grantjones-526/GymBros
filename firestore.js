@@ -423,21 +423,37 @@ export const deleteWorkout = async (workoutId) => {
  * @param {Date} date - Entry date
  * @param {number} amount - Calories consumed
  * @param {string} description - Meal description (optional)
+ * @param {object} macros - Optional macros object with protein, carbs, fat in grams
  * @returns {Promise} Document reference
  */
-export const createCalorieEntry = async (userId, date, amount, description = '') => {
+export const createCalorieEntry = async (userId, date, amount, description = '', macros = null) => {
   try {
     // Normalize date to start of day
     const entryDate = new Date(date);
     entryDate.setHours(0, 0, 0, 0);
 
-    const entryRef = await addDoc(collection(db, 'calorieEntries'), {
+    const entryData = {
       userID: userId,
       date: Timestamp.fromDate(entryDate),
       amount,
       description,
       createdAt: Timestamp.now()
-    });
+    };
+
+    // Only add macro fields if they exist and are valid numbers
+    if (macros) {
+      if (macros.protein != null && macros.protein >= 0) {
+        entryData.protein = macros.protein;
+      }
+      if (macros.carbs != null && macros.carbs >= 0) {
+        entryData.carbs = macros.carbs;
+      }
+      if (macros.fat != null && macros.fat >= 0) {
+        entryData.fat = macros.fat;
+      }
+    }
+
+    const entryRef = await addDoc(collection(db, 'calorieEntries'), entryData);
     return entryRef;
   } catch (error) {
     throw error;
@@ -665,6 +681,54 @@ export const subscribeToUserFriends = (userId, callback, errorCallback) => {
         }
 
         callback(allFriends);
+      },
+      (error) => {
+        if (errorCallback) errorCallback(error);
+      }
+    );
+
+    return unsubscribe;
+  } catch (error) {
+    if (errorCallback) errorCallback(error);
+    return () => {};
+  }
+};
+
+/**
+ * Subscribe to real-time updates for pending friend requests for a user
+ * @param {string} userId - User ID
+ * @param {function} callback - Callback receiving array of pending request objects
+ * @param {function} errorCallback - Callback for errors
+ * @returns {function} Unsubscribe function
+ */
+export const subscribeToPendingFriendRequests = (userId, callback, errorCallback) => {
+  try {
+    const q = query(
+      collection(db, 'friendRequests'),
+      where('toUserID', '==', userId),
+      where('status', '==', 'pending')
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      async (querySnapshot) => {
+        const requests = [];
+
+        for (const requestDoc of querySnapshot.docs) {
+          const requestData = requestDoc.data();
+
+          // Fetch the sender's user data
+          const fromUser = await getUser(requestData.fromUserID);
+
+          requests.push({
+            id: requestDoc.id,
+            fromUserID: requestData.fromUserID,
+            fromUser: fromUser,
+            createdAt: requestData.createdAt
+          });
+        }
+
+        callback(requests);
       },
       (error) => {
         if (errorCallback) errorCallback(error);
